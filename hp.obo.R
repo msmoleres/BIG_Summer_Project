@@ -47,10 +47,11 @@ while ( TRUE ) {
   #find i^s_a, concatenate current_hpo_node$is_a if true by adding the string that matches condition to
   ## current_hpo_node$is_a; allows us to add multiple is_a 
   if (grepl("^is_a",line)){
-    ##stop()
+    # stop()
     temp <-str_replace(line, "is_a: HP:", "")
     ## modify temp to strip all but numerics
-    temp <- gsub("\\D", "", temp)
+    # temp <- gsub("\\D", "", temp)
+    temp <- str_extract(temp,"[0-9]{7}")
     current_hpo_node$is_a <- c(current_hpo_node$is_a,
                                temp)
      
@@ -193,7 +194,7 @@ get_node_from_tree <- function(id, tree){
 
 
 phen_to_gene <- read.csv("phenotype_to_genes.txt", sep = "\t")
-
+phen_to_gene$HPO.id <- str_replace(phen_to_gene$HPO.id, "HP:", "")
 unique_hpo <- unique(phen_to_gene$HPO.id)[1:length(unique(phen_to_gene$HPO.id))]
 
 ## pulls HPO.id based off the first one in the table and gives all gene symbols unique to that Id
@@ -216,22 +217,22 @@ for (i in 1:length(unique(phen_to_gene$HPO.id))){
 
 # function for adding genes to node
 add_genes_to_node <- function(id, tree, gene_ids){
-  if(all(is.na(tree$left))){
-    return(tree)
-  }
-  if(all(is.na(tree$right))){
-    return(tree)
-  }
   if(id < tree$id){
+    if(all(is.na(tree$left))){
+      return(tree)
+    }
     tree$left <- add_genes_to_node(id, tree$left, gene_ids)
     return(tree)
   }
   if(id > tree$id){
+    if(all(is.na(tree$right))){
+      return(tree)
+    }
     tree$right <- add_genes_to_node(id, tree$right, gene_ids)
     return(tree)
   }
   if(id == tree$id){
-    tree$genes_assorted <- unique(c(tree$genes_assorted), gene_ids)
+    tree$genes_assorted <- unique(c(tree$genes_assorted, gene_ids))
     return(tree)
   }
 }
