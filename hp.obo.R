@@ -1,9 +1,20 @@
-# install.packages("stringr")
+#install.packages("stringr")
 # install.packages("tidyverse")
-# install.packages("data.tree")
+#install.packages("data.tree")
 
 library(data.tree)
 library(stringr)
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("biomaRt")
+BiocManager::install("org.Hs.eg.db")
+BiocManager::install("clusterProfiler")
+
+library(BiocManager)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
 
 #line = "is_a"
 # grepl("^is_a", line)
@@ -197,23 +208,6 @@ phen_to_gene <- read.csv("phenotype_to_genes.txt", sep = "\t")
 phen_to_gene$HPO.id <- str_replace(phen_to_gene$HPO.id, "HP:", "")
 unique_hpo <- unique(phen_to_gene$HPO.id)[1:length(unique(phen_to_gene$HPO.id))]
 
-## pulls HPO.id based off the first one in the table and gives all gene symbols unique to that Id
-phen_to_gene[which(phen_to_gene$HPO.id == unique(phen_to_gene$HPO.id)[1]),]$entrez.gene.symbol
-
-for (i in 1:length(unique(phen_to_gene$HPO.id))){
-  current_hpo_id <- unique(phen_to_gene$HPO.id)[i]
-  current_hpo_id <- str_replace(current_hpo_id, "HP:", "")
-  # which <- grep(current_hpo_id, phen_to_gene$HPO.id)
-  which <- which(phen_to_gene$HPO.id == current_hpo_id)
-  temp_genes <- phen_to_gene[which,]$entrez.gene.symbol
-  current_hpo_id_w_ancestors <- get_ancestors(current_hpo_id, hpo_bin_search_tree)
-  for(j in 1:length(current_hpo_id_w_ancestors)){
-    hpo_bin_search_tree <- add_genes_to_node(current_hpo_id_w_ancestors[j], hpo_bin_search_tree, temp_genes)
-  }
-  
-}
-
-
 
 # function for adding genes to node
 add_genes_to_node <- function(id, tree, gene_ids){
@@ -250,3 +244,60 @@ get_ancestors <- function(id,tree,ancestors = character(0)){
   }
   return(ancestors)
 }
+
+for (i in 1:length(unique(phen_to_gene$HPO.id))){
+  current_hpo_id <- unique(phen_to_gene$HPO.id)[i]
+  current_hpo_id <- str_replace(current_hpo_id, "HP:", "")
+  # which <- grep(current_hpo_id, phen_to_gene$HPO.id)
+  which <- which(phen_to_gene$HPO.id == current_hpo_id)
+  temp_genes <- phen_to_gene[which,]$entrez.gene.symbol
+  current_hpo_id_w_ancestors <- get_ancestors(current_hpo_id, hpo_bin_search_tree)
+  for(j in 1:length(current_hpo_id_w_ancestors)){
+    hpo_bin_search_tree <- add_genes_to_node(current_hpo_id_w_ancestors[j], hpo_bin_search_tree, temp_genes)
+  }
+  
+}
+
+## inserting gene ensemble
+
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+gene_ensemble <- getBM(attributes=c('chromosome_name','hgnc_symbol', 'ensembl_gene_id','gene_biotype'),
+               filters = list('biotype'='protein_coding'),
+               mart = ensembl, useCache = F)
+# genes <- genes[which(is.element(genes$chromosome_name, c(1:22, "X", "Y", "MT")) & genes$hgnc_symbol != "" ) ,]
+
+## getting gene ensemble ID based on gene name
+get_ensemble_id_of_gene <- function(gene_name){
+  if (is.element(gene_name, gene_ensemble$hgnc_symbol)){
+    return(gene_ensemble$ensembl_gene_id[which(gene_ensemble$hgnc_symbol == gene_name)])
+  }
+  else{
+    return(-1)
+  }
+}
+
+
+## GO enrichment
+
+node <- get_node_from_tree("0005948", hpo_bin_search_tree)
+
+allOE_genes<-str_split_fixed(rownames(exp_mat),"[.]",2)[,1]
+ggl <- list()
+for(gene in 1:length(node$genes_assorted)){
+  temp_gene <- node$genes_assorted[gene]
+  ensemble_gene_id <- get_ensemble_id_of_gene(temp_gene)
+  ego <- enrichGO(gene = ensemble_gene_id,
+                  universe = names(node$genes_assorted),
+                  keyType = "ENSEMBL",
+                  OrgDb = org.Hs.eg.db,
+                  ont = "BP",
+                  pAdjustMethod = "BH",
+                  qvalueCutoff = 0.05,
+                  readable = TRUE,
+                  pool=TRUE)
+  
+}
+
+head(ego)
+
+
