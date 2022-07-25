@@ -1,8 +1,8 @@
 #install.packages("stringr")
 # install.packages("tidyverse")
-#install.packages("data.tree")
+install.packages("oddsratio")
 
-library(data.tree)
+library(oddsratio)
 library(stringr)
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
@@ -15,12 +15,6 @@ library(BiocManager)
 library(clusterProfiler)
 library(org.Hs.eg.db)
 
-
-#line = "is_a"
-# grepl("^is_a", line)
-# if (grepl("^is_a", line)){
-#   print("Okay")
-# }
 
 #list for storing the id,name, and is_a
 current_hpo_node <- list(id = character(), name = character(), is_a = character())
@@ -257,6 +251,9 @@ for (i in 1:length(unique(phen_to_gene$HPO.id))){
   }
   
 }
+#####################################################################################################
+
+
 
 ## inserting gene ensemble
 
@@ -267,27 +264,18 @@ gene_ensemble <- getBM(attributes=c('chromosome_name','hgnc_symbol', 'ensembl_ge
 # genes <- genes[which(is.element(genes$chromosome_name, c(1:22, "X", "Y", "MT")) & genes$hgnc_symbol != "" ) ,]
 
 ## getting gene ensemble ID based on gene name
-get_ensemble_id_of_gene <- function(gene_name){
-  if (is.element(gene_name, gene_ensemble$hgnc_symbol)){
-    return(gene_ensemble$ensembl_gene_id[which(gene_ensemble$hgnc_symbol == gene_name)])
-  }
-  else{
-    return(-1)
-  }
-}
 
+gene_ensemble$ensembl_gene_id[which(gene_ensemble$hgnc_symbol == gene_name)]
 
 ## GO enrichment
 
 node <- get_node_from_tree("0005948", hpo_bin_search_tree)
 
-allOE_genes<-str_split_fixed(rownames(exp_mat),"[.]",2)[,1]
-ggl <- list()
-for(gene in 1:length(node$genes_assorted)){
-  temp_gene <- node$genes_assorted[gene]
-  ensemble_gene_id <- get_ensemble_id_of_gene(temp_gene)
-  ego <- enrichGO(gene = ensemble_gene_id,
-                  universe = names(node$genes_assorted),
+
+  temp_genes <- node$genes_assorted
+  gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
+  ego <- enrichGO(gene = gene_subset,
+                  universe = gene_ensemble$ensembl_gene_id,
                   keyType = "ENSEMBL",
                   OrgDb = org.Hs.eg.db,
                   ont = "BP",
@@ -295,9 +283,47 @@ for(gene in 1:length(node$genes_assorted)){
                   qvalueCutoff = 0.05,
                   readable = TRUE,
                   pool=TRUE)
-  
-}
+
 
 head(ego)
 
+##Odds Ratio
+
+chisq.test()
+test <- fisher.test(temp)
+
+## Adding Chromatin Modifier to node function
+
+add_chrom_modifier_to_node <- function(tree, chrom_m){
+    if(!all(is.na(tree$left))){tree$left <- add_chrom_modifier_to_node(tree$left, chrom_m)
+  }
+    if(!all(is.na(tree$right))){tree$right <- add_chrom_modifier_to_node(tree$right, chrom_m)
+  }
+  tree$chrom_assorted <- tree$genes_assorted[which(is.element(tree$genes_assorted, chromatin_modifiers))]
+ return(tree)
+}
+
+temp <- add_chrom_modifier_to_node(hpo_bin_search_tree, chromatin_modifiers)
+
+##Add Fisher Test to tree function
+add_fisher_to_node <- function(tree){
+  if(!all(is.na(tree$left))){tree$left <- add_fisher_to_node(tree$left)
+  }
+  if(!all(is.na(tree$right))){tree$right <- add_fisher_to_node(tree$right)
+  }
+  tree$fisher_test <- fisher.test(t(matrix(c(length(tree$chrom_assorted)
+                                             ,length(chromatin_modifiers) - length(tree$chrom_assorted) 
+                                             ,length(tree$genes_assorted) - length(tree$chrom_assorted)
+                                             ,length(unique(gene_ensemble$ensembl_gene_id))) - length(tree$genes_assorted),
+                                           nrow=2)))
+  return(tree)
+}
+
+# node$chrom_assorted <- node$genes_assorted[which(is.element(node$genes_assorted, chromatin_modifiers))]
+
+#Chromatin Modifiers
+
+chrom <- read.csv("chromatin_modifiers.csv")
+chromatin_modifiers <- character()
+chromatin_modifiers <- unique(chrom$hgnc_symbol) 
 
