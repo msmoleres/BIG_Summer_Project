@@ -2,7 +2,7 @@
 # install.packages("tidyverse")
 install.packages("oddsratio")
 install.packages("ggplot2")
-install.packages("ggextra")
+install.packages("ggExtra")
 
 library(ggplot2)
 library(ggExtra)
@@ -329,7 +329,7 @@ tree_to_dataframe <- function(tree, current_dataframe=NULL){
 
   dataframe <- current_dataframe
   current_dataframe <- data.frame(
-    HPO_ID <- tree$id,
+    HPO_ID = tree$id,
     phenotype = tree$name,
     ancestors = paste(tree$is_a, collapse = ","),
     genes_associated = paste(c(tree$genes_assorted), collapse = ","),
@@ -360,12 +360,12 @@ plot(-log10(search_tree_dataframe$p_value), log2(search_tree_dataframe$odds_rati
 which(log2(search_tree_dataframe$odds_ratio) > 4 & -log10(search_tree_dataframe$p_value) > 10)
 # Highest oddsratio and really reject the null (super small p.value)
 top_ids <- list("0001212","0008398", "0009928", "0011231", "0011298", "0011937", "0012523", "0012808", "0012810" )
-
+ego_list <- list()
 for (id in 1:length(top_ids)){
 node <- get_node_from_tree(top_ids[id], hpo_bin_search_tree)
 temp_genes <- node$genes_assorted
 gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
-ego <- enrichGO(gene = gene_subset,
+ego_list[[node$id]] <- enrichGO(gene = gene_subset,
                 universe = gene_ensemble$ensembl_gene_id,
                 keyType = "ENSEMBL",
                 OrgDb = org.Hs.eg.db,
@@ -378,9 +378,33 @@ ego <- enrichGO(gene = gene_subset,
 
 head(ego)
 
-
-
-
 #Plots
+head(search_tree_dataframe)
+
+which <- which(log2(search_tree_dataframe$odds_ratio) > 4 & -log10(search_tree_dataframe$p_value) > 10)
+#p <- 
+ggplot(data = search_tree_dataframe, aes(x= -log10(p_value), y= log2(odds_ratio))) +
+  #geom_bin_2d(bins=10)+
+  geom_point(size=0.1, color="orange", aes(alpha= -log10(p_value) )) +
+  geom_point(data = search_tree_dataframe[which,], aes(x=-log10(p_value)+0.5),color="blue", alpha=0.3, size=6)+
+  geom_point(data = search_tree_dataframe[which,], color="red", alpha=0.3, size=6)+
+  theme(legend.position="none")+
+  geom_vline(xintercept = 10) +
+  geom_hline(yintercept = 4)
+  
+
+p1 <- ggMarginal(p, type="histogram")
+
+# marginal density
+p2 <- ggMarginal(p, type="density")
+
+# marginal boxplot
+p3 <- ggMarginal(p, type="boxplot")
+
+
+
+
+
+
 hist(-log10(temp_dataframe$p_value),breaks=100);abline(v=-log10(0.05/nrow(temp_dataframe)))
 hist(-log10(temp_dataframe$p_value*nrow(temp_dataframe)),breaks=100);abline(v=-log10(0.05))
