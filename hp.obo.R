@@ -68,16 +68,6 @@ while ( TRUE ) {
 close(con)
 
   
-fib <- function(n){
-  if (n==1){
-    return(0)
-  }
-  if (n==2){
-    return(1)
-  }
-  return(fib(n-1)+fib(n-2))
-}
-
 #Binary Tree
 node_list = hpo_list 
 
@@ -242,7 +232,6 @@ get_ancestors <- function(id,tree,ancestors = character(0)){
 for (i in 1:length(unique(phen_to_gene$HPO.id))){
   current_hpo_id <- unique(phen_to_gene$HPO.id)[i]
   current_hpo_id <- str_replace(current_hpo_id, "HP:", "")
-  # which <- grep(current_hpo_id, phen_to_gene$HPO.id)
   which <- which(phen_to_gene$HPO.id == current_hpo_id)
   temp_genes <- phen_to_gene[which,]$entrez.gene.symbol
   current_hpo_id_w_ancestors <- get_ancestors(current_hpo_id, hpo_bin_search_tree)
@@ -261,7 +250,6 @@ ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37
 gene_ensemble <- getBM(attributes=c('chromosome_name','hgnc_symbol', 'ensembl_gene_id','gene_biotype'),
                filters = list('biotype'='protein_coding'),
                mart = ensembl, useCache = F)
-# genes <- genes[which(is.element(genes$chromosome_name, c(1:22, "X", "Y", "MT")) & genes$hgnc_symbol != "" ) ,]
 
 ## getting gene ensemble ID based on gene name
 
@@ -270,7 +258,6 @@ gene_ensemble$ensembl_gene_id[which(gene_ensemble$hgnc_symbol == gene_name)]
 ## GO enrichment
 
 node <- get_node_from_tree("0005948", hpo_bin_search_tree)
-
 
   temp_genes <- node$genes_assorted
   gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
@@ -289,8 +276,13 @@ head(ego)
 
 ##Odds Ratio
 
-chisq.test()
 test <- fisher.test(temp)
+
+#Chromatin Modifiers
+
+chrom <- read.csv("chromatin_modifiers.csv")
+chromatin_modifiers <- character()
+chromatin_modifiers <- unique(chrom$hgnc_symbol) 
 
 ## Adding Chromatin Modifier to node function
 
@@ -302,8 +294,8 @@ add_chrom_modifier_to_node <- function(tree, chrom_m){
   tree$chrom_assorted <- tree$genes_assorted[which(is.element(tree$genes_assorted, chromatin_modifiers))]
  return(tree)
 }
-
-temp <- add_chrom_modifier_to_node(hpo_bin_search_tree, chromatin_modifiers)
+#replace temp w/ hpo_binary_search_tree(when done)#
+hpo_bin_search_tree <- add_chrom_modifier_to_node(hpo_bin_search_tree, chromatin_modifiers)
 
 ##Add Fisher Test to tree function
 add_fisher_to_node <- function(tree){
@@ -311,19 +303,48 @@ add_fisher_to_node <- function(tree){
   }
   if(!all(is.na(tree$right))){tree$right <- add_fisher_to_node(tree$right)
   }
-  tree$fisher_test <- fisher.test(t(matrix(c(length(tree$chrom_assorted)
+  if (length(tree$chrom_assorted) != 0){
+   # print(tree$id)
+    tree$fisher_test <- fisher.test(t(matrix(c(length(tree$chrom_assorted)
                                              ,length(chromatin_modifiers) - length(tree$chrom_assorted) 
                                              ,length(tree$genes_assorted) - length(tree$chrom_assorted)
-                                             ,length(unique(gene_ensemble$ensembl_gene_id))) - length(tree$genes_assorted),
+                                             ,length(unique(gene_ensemble$ensembl_gene_id)) - length(tree$genes_assorted)),
                                            nrow=2)))
+  }
   return(tree)
 }
 
+# replace temp w/ hpo_binary_search_tree, replace temp2 w/ hpo_binary_search_tree
+hpo_bin_search_tree <- add_fisher_to_node(hpo_bin_search_tree)
+
 # node$chrom_assorted <- node$genes_assorted[which(is.element(node$genes_assorted, chromatin_modifiers))]
 
-#Chromatin Modifiers
+#tree to dataframe function,
 
-chrom <- read.csv("chromatin_modifiers.csv")
-chromatin_modifiers <- character()
-chromatin_modifiers <- unique(chrom$hgnc_symbol) 
+tree_to_dataframe <- function(tree, current_dataframe=NULL){
 
+  dataframe <- current_dataframe
+  current_dataframe <- data.frame(
+    phenotype = tree$name,
+    ancestors = paste(tree$is_a, collapse = ","),
+    genes_associated = paste(c(tree$genes_assorted), collapse = ","),
+    chrom_modifiers_associated = paste(c(tree$chrom_assorted), collapse = ","),
+    p_value = ifelse(is.null(tree$fisher_test$p.value), NA, tree$fisher_test$p.value), 
+    odds_ratio = ifelse(is.null(tree$fisher_test$estimate), NA, tree$fisher_test$estimate[[1]]), 
+    confidence_interval = ifelse(is.null(tree$fisher_test$conf.int),NA,paste(c(tree$fisher_test$conf.int), collapse = "--"))
+  )
+  current_dataframe <- rbind(dataframe, current_dataframe)
+  
+  if(!all(is.na(tree$left))){current_dataframe <- tree_to_dataframe(tree$left, current_dataframe)
+  }
+  if(!all(is.na(tree$right))){current_dataframe <- tree_to_dataframe(tree$right, current_dataframe)
+  }
+  return(current_dataframe)
+}
+
+# make hpo_binary_search_tree into dataframe
+
+test <- data.frame(first= "a", second = "b", third = "c")
+test2 <- data.frame(second = "b",first= "a",  third = "c")
+test <- rbind(test, test2)
+rownames(test) <- c("x","y","z")
