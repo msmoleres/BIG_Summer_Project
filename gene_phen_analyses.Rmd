@@ -1,0 +1,299 @@
+---
+title: "gene_phen_analyses"
+output: html_document
+date: '2022-07-20'
+---
+
+#Loading Libraries that are used throughout code
+```{r, load libraries}
+install.packages("oddsratio")
+
+library(oddsratio)
+library(stringr)
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("biomaRt")
+BiocManager::install("org.Hs.eg.db")
+BiocManager::install("clusterProfiler")
+
+library(BiocManager)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+```
+# Creating Vector Objects to Store ID,Name, & is_a
+```{r, create vector objects}
+current_hpo_node <- list(id = character(), name = character(), is_a = character())
+hpo_list <- list()
+```
+# Processing obo file into R and creating hpo_list
+```{r, process obo file}
+con <- file("hp.obo.txt", "r")
+while ( TRUE ) {
+  line <- readLines(con, n = 1)
+  if ( length(line) == 0 ) {
+    hpo_list[[length(hpo_list)+1]] <- current_hpo_node
+    break
+  }
+  
+  if (grepl("^id: HP:",line)){
+   
+    if (length(current_hpo_node$id) != 0){
+      hpo_list[[length(hpo_list)+1]] <- current_hpo_node
+      current_hpo_node <- list(id = character(), name = character(), is_a = character())
+    }
+    
+    current_hpo_node$id <- str_replace(line, "id: HP:", "")
+  }
+  if (grepl("^name",line)){
+    current_hpo_node$name <- str_replace(line, "name:", "")
+    
+  }
+
+  if (grepl("^is_a",line)){
+    temp <-str_replace(line, "is_a: HP:", "")
+    temp <- str_extract(temp,"[0-9]{7}")
+    current_hpo_node$is_a <- c(current_hpo_node$is_a,
+                               temp)
+  }
+}
+
+close(con)
+
+node_list = hpo_list 
+```
+#Defining Tree functions that will be used to build the tree and add a node to the tree
+```{r, define tree funcs}
+add_node_to_tree <- function(tree, node){
+  if (node$id < tree$id){
+    if (all(is.na(tree$left))){
+      tree$left <- node
+      
+    }else {
+      tree$left <- add_node_to_tree(tree$left, node)
+      return(tree)
+    }
+  }
+  if (node$id > tree$id){
+    if (all(is.na(tree$right))){
+      tree$right <- node
+    }else {
+      tree$right <- add_node_to_tree(tree$right, node)
+      return(tree)
+    }
+  
+  }
+  if (node$id == tree$id){
+    print('Warning: Current Node is equal to Tree Node')
+  }
+  return(tree)
+}
+
+build_tree <- function(node_list){
+  which_node <- sample(1:length(node_list),1)
+  node <- node_list[[which_node]]
+  node_list[[which_node]] <- NULL
+  node$left <- NA
+  node$right <- NA
+  tree <- node
+  
+  while(length(node_list)>0){
+    which_node <- sample(1:length(node_list),1)
+    node <- node_list[[which_node]]
+    node$left <- NA
+    node$right <- NA
+    node_list[[which_node]] <- NULL
+    tree <- add_node_to_tree(tree, node)
+  }
+  return(tree)
+} 
+
+```
+#Building the actualy binary search tree
+```{r, building binary search tree}
+hpo_bin_search_tree <- build_tree(hpo_list)
+```
+#Set of functions that are able to pull a node from the tree, get a nodes ancestors, and add genes to a node
+```{r, searching tree functions}
+get_depth_of_node_in_tree = function(id, tree, depth=0){
+  if (id < tree$id){
+    if (all(is.na(tree$left))){
+      return(-1)
+    }
+    return(get_depth_of_node_in_tree(id, tree$right, depth = depth+1))
+  }
+  if (id > tree$id){
+    if (all(is.na(tree$right))){
+      return(-1)
+    }
+    return(get_depth_of_node_in_tree(id, tree$right, depth = depth+1))
+  }
+  if (id == tree$id){
+    return(depth)
+  }
+  else 
+    return(get_depth_of_node_in_tree(id, tree$right, depth = depth+1))
+}
+
+get_node_from_tree <- function(id, tree){
+  if (id < tree$id){
+    if (all(is.na(tree$left))){
+      return(-1)
+    }
+    return(get_node_from_tree(id, tree$left))
+  }
+  if (id > tree$id){
+      if (all(is.na(tree$right))){
+        return(-1)
+      }
+    return(get_node_from_tree(id, tree$right))
+  }
+  if (id == tree$id){
+    tree$left = NULL
+    tree$right = NULL
+    node <- tree
+    return(node)
+  }
+}
+
+get_ancestors <- function(id,tree,ancestors = character(0)){
+  node <- get_node_from_tree(id,tree)
+  ancestors <- c(ancestors, node$id)
+  if (length(node$is_a)== 0){
+    return(ancestors)
+  }
+  for (is_a in node$is_a){
+      ancestors <- unique(c(ancestors,get_ancestors(is_a, tree, ancestors)))
+  }
+  return(ancestors)
+}
+
+add_genes_to_node <- function(id, tree, gene_ids){
+  if(id < tree$id){
+    if(all(is.na(tree$left))){
+      return(tree)
+    }
+    tree$left <- add_genes_to_node(id, tree$left, gene_ids)
+    return(tree)
+  }
+  if(id > tree$id){
+    if(all(is.na(tree$right))){
+      return(tree)
+    }
+    tree$right <- add_genes_to_node(id, tree$right, gene_ids)
+    return(tree)
+  }
+  if(id == tree$id){
+    tree$genes_assorted <- unique(c(tree$genes_assorted, gene_ids))
+    return(tree)
+  }
+}
+
+```
+#Reading in the file containing the genes linked to the HPO Id's
+```{r,reading phen_to_gene file}
+phen_to_gene <- read.csv("phenotype_to_genes.txt", sep = "\t")
+phen_to_gene$HPO.id <- str_replace(phen_to_gene$HPO.id, "HP:", "")
+unique_hpo <- unique(phen_to_gene$HPO.id)[1:length(unique(phen_to_gene$HPO.id))]
+```
+#Adding the genes to the search tree based on the HPO ID and Ancestor Id's
+```{r,adding genes to the hpo_bin_search_tree}
+for (i in 1:length(unique(phen_to_gene$HPO.id))){
+  current_hpo_id <- unique(phen_to_gene$HPO.id)[i]
+  current_hpo_id <- str_replace(current_hpo_id, "HP:", "")
+  which <- which(phen_to_gene$HPO.id == current_hpo_id)
+  temp_genes <- phen_to_gene[which,]$entrez.gene.symbol
+  current_hpo_id_w_ancestors <- get_ancestors(current_hpo_id, hpo_bin_search_tree)
+  for(j in 1:length(current_hpo_id_w_ancestors)){
+    hpo_bin_search_tree <- add_genes_to_node(current_hpo_id_w_ancestors[j], hpo_bin_search_tree, temp_genes)
+  }
+  
+}
+```
+
+```{r, inserting gene_ensemble}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+gene_ensemble <- getBM(attributes=c('chromosome_name','hgnc_symbol', 'ensembl_gene_id','gene_biotype'),
+               filters = list('biotype'='protein_coding'),
+               mart = ensembl, useCache = F)
+
+```
+```{r, GO enrichment}
+node <- get_node_from_tree("0005948", hpo_bin_search_tree)
+
+  temp_genes <- node$genes_assorted
+  gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
+  ego <- enrichGO(gene = gene_subset,
+                  universe = gene_ensemble$ensembl_gene_id,
+                  keyType = "ENSEMBL",
+                  OrgDb = org.Hs.eg.db,
+                  ont = "BP",
+                  pAdjustMethod = "BH",
+                  qvalueCutoff = 0.05,
+                  readable = TRUE,
+                  pool=TRUE)
+
+
+head(ego)
+```
+```{r,inseting chromatin modifiers }
+chrom <- read.csv("chromatin_modifiers.csv")
+chromatin_modifiers <- character()
+chromatin_modifiers <- unique(chrom$hgnc_symbol) 
+```
+```{r, adding chromatin modifiers to search tree}
+add_chrom_modifier_to_node <- function(tree, chrom_m){
+    if(!all(is.na(tree$left))){tree$left <- add_chrom_modifier_to_node(tree$left, chrom_m)
+  }
+    if(!all(is.na(tree$right))){tree$right <- add_chrom_modifier_to_node(tree$right, chrom_m)
+  }
+  tree$chrom_assorted <- tree$genes_assorted[which(is.element(tree$genes_assorted, chromatin_modifiers))]
+ return(tree)
+}
+
+hpo_bin_search_tree <- add_chrom_modifier_to_node(hpo_bin_search_tree, chromatin_modifiers)
+```
+```{r,adding fisher test to search tree }
+add_fisher_to_node <- function(tree){
+  if(!all(is.na(tree$left))){tree$left <- add_fisher_to_node(tree$left)
+  }
+  if(!all(is.na(tree$right))){tree$right <- add_fisher_to_node(tree$right)
+  }
+  if (length(tree$chrom_assorted) != 0){
+    tree$fisher_test <- fisher.test(t(matrix(c(length(tree$chrom_assorted)
+                                             ,length(chromatin_modifiers) - length(tree$chrom_assorted) 
+                                             ,length(tree$genes_assorted) - length(tree$chrom_assorted)
+                                             ,length(unique(gene_ensemble$ensembl_gene_id)) - length(tree$genes_assorted)),
+                                           nrow=2)))
+  }
+  return(tree)
+}
+
+hpo_bin_search_tree <- add_fisher_to_node(hpo_bin_search_tree)
+```
+```{r, creating dataframe from search tree}
+tree_to_dataframe <- function(tree, current_dataframe=NULL){
+
+  dataframe <- current_dataframe
+  current_dataframe <- data.frame(
+    HPO_ID <- tree$id,
+    phenotype = tree$name,
+    ancestors = paste(tree$is_a, collapse = ","),
+    genes_associated = paste(c(tree$genes_assorted), collapse = ","),
+    chrom_modifiers_associated = paste(c(tree$chrom_assorted), collapse = ","),
+    p_value = ifelse(is.null(tree$fisher_test$p.value), NA, tree$fisher_test$p.value), 
+    odds_ratio = ifelse(is.null(tree$fisher_test$estimate), NA, tree$fisher_test$estimate[[1]]), 
+    confidence_interval = ifelse(is.null(tree$fisher_test$conf.int),NA,paste(c(tree$fisher_test$conf.int), collapse = "--"))
+  )
+  current_dataframe <- rbind(dataframe, current_dataframe)
+  
+  if(!all(is.na(tree$left))){current_dataframe <- tree_to_dataframe(tree$left, current_dataframe)
+  }
+  if(!all(is.na(tree$right))){current_dataframe <- tree_to_dataframe(tree$right, current_dataframe)
+  }
+  return(current_dataframe)
+}
+
+search_tree_dataframe <- tree_to_dataframe(hpo_bin_search_tree)
+```

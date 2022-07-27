@@ -1,7 +1,11 @@
 #install.packages("stringr")
 # install.packages("tidyverse")
 install.packages("oddsratio")
+install.packages("ggplot2")
+install.packages("ggextra")
 
+library(ggplot2)
+library(ggExtra)
 library(oddsratio)
 library(stringr)
 if (!require("BiocManager", quietly = TRUE))
@@ -325,6 +329,7 @@ tree_to_dataframe <- function(tree, current_dataframe=NULL){
 
   dataframe <- current_dataframe
   current_dataframe <- data.frame(
+    HPO_ID <- tree$id,
     phenotype = tree$name,
     ancestors = paste(tree$is_a, collapse = ","),
     genes_associated = paste(c(tree$genes_assorted), collapse = ","),
@@ -342,9 +347,40 @@ tree_to_dataframe <- function(tree, current_dataframe=NULL){
   return(current_dataframe)
 }
 
-# make hpo_binary_search_tree into dataframe
+search_tree_dataframe <- tree_to_dataframe(hpo_bin_search_tree)
 
-test <- data.frame(first= "a", second = "b", third = "c")
-test2 <- data.frame(second = "b",first= "a",  third = "c")
-test <- rbind(test, test2)
-rownames(test) <- c("x","y","z")
+
+# test <- data.frame(first= "a", second = "b", third = "c")
+# test2 <- data.frame(second = "b",first= "a",  third = "c")
+# test <- rbind(test, test2)
+# rownames(test) <- c("x","y","z")
+
+#Go Enrightment on TOP 5
+plot(-log10(search_tree_dataframe$p_value), log2(search_tree_dataframe$odds_ratio) );abline(v=-log10(0.05/nrow(search_tree_dataframe)));abline(h=2)
+which(log2(search_tree_dataframe$odds_ratio) > 4 & -log10(search_tree_dataframe$p_value) > 10)
+# Highest oddsratio and really reject the null (super small p.value)
+top_ids <- list("0001212","0008398", "0009928", "0011231", "0011298", "0011937", "0012523", "0012808", "0012810" )
+
+for (id in 1:length(top_ids)){
+node <- get_node_from_tree(top_ids[id], hpo_bin_search_tree)
+temp_genes <- node$genes_assorted
+gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
+ego <- enrichGO(gene = gene_subset,
+                universe = gene_ensemble$ensembl_gene_id,
+                keyType = "ENSEMBL",
+                OrgDb = org.Hs.eg.db,
+                ont = "BP",
+                pAdjustMethod = "BH",
+                qvalueCutoff = 0.05,
+                readable = TRUE,
+                pool=TRUE)
+}
+
+head(ego)
+
+
+
+
+#Plots
+hist(-log10(temp_dataframe$p_value),breaks=100);abline(v=-log10(0.05/nrow(temp_dataframe)))
+hist(-log10(temp_dataframe$p_value*nrow(temp_dataframe)),breaks=100);abline(v=-log10(0.05))
