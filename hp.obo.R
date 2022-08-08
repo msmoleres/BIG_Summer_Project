@@ -1,19 +1,12 @@
 #install.packages("stringr")
 # install.packages("tidyverse")
-install.packages("oddsratio")
-install.packages("ggplot2")
-install.packages("ggExtra")
-
+library(ggnewscale)
+library(enrichplot)
 library(ggplot2)
 library(ggExtra)
 library(oddsratio)
 library(stringr)
-if (!require("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
 
-BiocManager::install("biomaRt")
-BiocManager::install("org.Hs.eg.db")
-BiocManager::install("clusterProfiler")
 
 library(BiocManager)
 library(clusterProfiler)
@@ -359,52 +352,124 @@ search_tree_dataframe <- tree_to_dataframe(hpo_bin_search_tree)
 plot(-log10(search_tree_dataframe$p_value), log2(search_tree_dataframe$odds_ratio) );abline(v=-log10(0.05/nrow(search_tree_dataframe)));abline(h=2)
 which(log2(search_tree_dataframe$odds_ratio) > 4 & -log10(search_tree_dataframe$p_value) > 10)
 # Highest oddsratio and really reject the null (super small p.value)
+## For BP ontology
 top_ids <- list("0001212","0008398", "0009928", "0011231", "0011298", "0011937", "0012523", "0012808", "0012810" )
 ego_list <- list()
 for (id in 1:length(top_ids)){
-node <- get_node_from_tree(top_ids[id], hpo_bin_search_tree)
-temp_genes <- node$genes_assorted
-gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
-ego_list[[node$id]] <- enrichGO(gene = gene_subset,
-                universe = gene_ensemble$ensembl_gene_id,
-                keyType = "ENSEMBL",
-                OrgDb = org.Hs.eg.db,
-                ont = "BP",
-                pAdjustMethod = "BH",
-                qvalueCutoff = 0.05,
-                readable = TRUE,
-                pool=TRUE)
+  node <- get_node_from_tree(top_ids[id], hpo_bin_search_tree)
+  temp_genes <- setdiff(node$genes_assorted, node$chrom_assorted)
+  gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
+  ego_list[[node$id]] <- enrichGO(gene = gene_subset,
+                  universe = gene_ensemble$ensembl_gene_id,
+                  keyType = "ENSEMBL",
+                  OrgDb = org.Hs.eg.db,
+                  ont = "BP", ## CC , BP, MF
+                  pAdjustMethod = "BH",
+                  qvalueCutoff = 0.05,
+                  readable = TRUE,
+                  pool=TRUE)
+  
+  png(filename = paste("temp_image_p_",
+                       signif(node$fisher_test$p.value,2),
+                       "_or_",
+                       signif(node$fisher_test$estimate[[1]]),
+                       "_term_", node$name,
+                       "_id_", node$id,
+                       ".png"
+  ))
+  print(dotplot(ego_list[[node$id]], showCategory = 10))
+  dev.off()
 }
 
 head(ego)
 
+temp_ego <- pairwise_termsim(ego_list$`0011298`)
+emapplot(temp_ego, showCategory = 10 )
+
+
+emapplot(temp_ego,showCategory = 15, cex_category=1,layout="kk") 
+cowplot::plot_grid(p1, p2, p3, p4, ncol=2, labels=LETTERS[1:4])
+
 #Plots
 head(search_tree_dataframe)
-
 which <- which(log2(search_tree_dataframe$odds_ratio) > 4 & -log10(search_tree_dataframe$p_value) > 10)
-#p <- 
+sig <- which(-log10(search_tree_dataframe$p_value) > 35)
+
+#GGplot for dataframe
 ggplot(data = search_tree_dataframe, aes(x= -log10(p_value), y= log2(odds_ratio))) +
   #geom_bin_2d(bins=10)+
-  geom_point(size=0.1, color="orange", aes(alpha= -log10(p_value) )) +
-  geom_point(data = search_tree_dataframe[which,], aes(x=-log10(p_value)+0.5),color="blue", alpha=0.3, size=6)+
-  geom_point(data = search_tree_dataframe[which,], color="red", alpha=0.3, size=6)+
+  geom_point(size=1, color="black", aes(alpha= -log10(p_value) )) +
+  # geom_point(data = search_tree_dataframe[which,], aes(x=-log10(p_value)+0.5),color="blue", alpha=0.3, size=6)+
+  geom_point(data = search_tree_dataframe[which,], color="red", alpha=1, size=3)+
+  geom_point(data = search_tree_dataframe[sig,], color="green", alpha=1, size=3)+
   theme(legend.position="none")+
   geom_vline(xintercept = 10) +
   geom_hline(yintercept = 4)
   
 
-p1 <- ggMarginal(p, type="histogram")
+#Bar Plot for Most significant 
+which(-log10(search_tree_dataframe$p_value) > 35)
+most_significant <- list("0000159", "0000177","0000233","0000315","0000436","0000492","0030669","0032039")
 
-# marginal density
-p2 <- ggMarginal(p, type="density")
+most_dataframe <- data.frame()
+for (x in 1:length(most_significant)){
+  node <- get_node_from_tree(most_significant[[x]], hpo_bin_search_tree)
+  most_data <- data.frame(HPO_id = node$id ,  
+    odds_ratio = node$fisher_test$estimate
+  )
+  most_dataframe <- rbind(most_dataframe, most_data)
+}
 
-# marginal boxplot
-p3 <- ggMarginal(p, type="boxplot")
+ggplot(most_dataframe, aes(x= HPO_id, y=odds_ratio), fill = x) +
+  aes(reorder(HPO_id, -odds_ratio)) +
+  geom_bar(stat = "identity")+
+  scale_fill_hue(c = 40) +
+  theme(legend.position="none")
 
+#Bar plot for highly enriched significant nodes
+top_dataframe <- data.frame()
+for (x in 1:length(top_ids)){
+  node <- get_node_from_tree(top_ids[[x]], hpo_bin_search_tree)
+  top_data <- data.frame(HPO_id = node$id ,  
+                          odds_ratio = node$fisher_test$estimate
+  )
+  top_dataframe <- rbind(top_dataframe, top_data)
+}
 
+ggplot(top_dataframe, aes(x= HPO_id, y=odds_ratio),  fill = x) +
+  aes(reorder(HPO_id, -odds_ratio)) +
+  geom_bar(stat = "identity")+
+  scale_fill_hue(c = 40) +
+  theme(legend.position="none")
 
+#GO Analysis for most significant
+most_significant <- list("0000159", "0000177","0000233","0000315","0000436","0000492","0030669","0032039")
+most_list <- list()
+for (id in 1:length(most_significant)){
+  node <- get_node_from_tree(most_significant[[id]], hpo_bin_search_tree)
+  temp_genes <- setdiff(node$genes_assorted, node$chrom_assorted)
+  gene_subset <- gene_ensemble$ensembl_gene_id[which(is.element(gene_ensemble$hgnc_symbol, temp_genes))]
+  most_list[[node$id]] <- enrichGO(gene = gene_subset,
+                                  universe = gene_ensemble$ensembl_gene_id,
+                                  keyType = "ENSEMBL",
+                                  OrgDb = org.Hs.eg.db,
+                                  ont = "BP", ## CC , BP, MF
+                                  pAdjustMethod = "BH",
+                                  qvalueCutoff = 0.05,
+                                  readable = TRUE,
+                                  pool=TRUE)
+  
+  png(filename = paste("temp_image_p_",
+                       signif(node$fisher_test$p.value,2),
+                       "_or_",
+                       signif(node$fisher_test$estimate[[1]]),
+                       "_term_", node$name,
+                       "_id_", node$id,
+                       ".png"
+  ))
+  print(dotplot(most_list[[node$id]], showCategory = 10))
+  dev.off()
+}
 
-
-
-hist(-log10(temp_dataframe$p_value),breaks=100);abline(v=-log10(0.05/nrow(temp_dataframe)))
-hist(-log10(temp_dataframe$p_value*nrow(temp_dataframe)),breaks=100);abline(v=-log10(0.05))
+temp_most <- pairwise_termsim(most_list$`0000315`)
+emapplot(temp_most, showCategory = 10 )
